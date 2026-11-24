@@ -1,0 +1,40 @@
+{
+  "camera": {
+    "index": 0,
+    "width": 640,
+    "height": 480,
+    "fps": 30,
+    "backend": "auto",
+    "autofocus": false,
+    "auto_exposure": true,
+    "mirror": true
+  },
+  "detection": {
+    "method": "color_marker",
+    "hsv_lower": [
+      64,
+      34,
+      0
+    ],
+    "hsv_upper": [
+      84,
+      255,
+      255
+    ],
+    "downscale": 2,
+    "blur": 3,
+    "open_kernel": 3,
+    "close_kernel": 5,
+    "min_area": 40,
+    "max_area_ratio": 0.15,
+    "use_opencv": false
+  },
+  "stabilization": {
+    "alpha_min": 0.25,
+    "alpha_max": 0.9,
+    "speed_scale": 25.0,
+    "dead_zone": 1.5,
+    "max_lost_frames": 5,
+    "max_jump": 150.0
+  }
+}
