@@ -20,10 +20,10 @@ import cv2
 
 _BACKENDS = {
     "auto": None,
-    "dshow": cv2.CAP_DSHOW,          # Windows (ouverture rapide)
-    "msmf": cv2.CAP_MSMF,            # Windows (Media Foundation)
-    "v4l2": cv2.CAP_V4L2,            # Linux
-    "avfoundation": cv2.CAP_AVFOUNDATION,  # macOS
+    "dshow": cv2.CAP_DSHOW,          
+    "msmf": cv2.CAP_MSMF,            
+    "v4l2": cv2.CAP_V4L2,            
+    "avfoundation": cv2.CAP_AVFOUNDATION, 
 }
 
 
@@ -100,7 +100,7 @@ class Camera:
         if self.cap is not None:
             self.cap.release()
             self.cap = None
-
+ 
     def __enter__(self):
         return self.open()
 

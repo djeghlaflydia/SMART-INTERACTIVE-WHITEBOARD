@@ -12,12 +12,12 @@
   "detection": {
     "method": "color_marker",
     "hsv_lower": [
-      64,
-      34,
+      104,
+      0,
       0
     ],
     "hsv_upper": [
-      84,
+      124,
       255,
       255
     ],
