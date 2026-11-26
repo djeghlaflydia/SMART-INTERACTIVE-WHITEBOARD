@@ -9,6 +9,8 @@ Lancer :  python tests/test_p1.py     (depuis le dossier P1_detection)
 3. Le détecteur ne « voit » rien quand le marqueur est absent.
 4. Le stabilisateur réduit le tremblement et gère la disparition/réapparition.
 5. Mesure du temps de traitement par image.
+6. YCrCb NumPy vs OpenCV.
+7. OpenCVHandDetector détecte une main synthétique et rejette les distracteurs.
 """
 
 import os
@@ -23,6 +25,7 @@ sys.path.insert(0, ROOT)
 
 from p1 import ColorMarkerDetector, Detection, PointerStabilizer  # noqa: E402
 from p1 import image_ops as ops  # noqa: E402
+from p1.detector import OpenCVHandDetector  # noqa: E402
 
 rng = np.random.default_rng(0)
 passed = failed = 0
@@ -49,6 +52,42 @@ def scene(cx=None, cy=None, r=14, noise=6, distractor=False, w=640, h=480):
     if distractor:
         cv2.circle(img, (580, 60), 2, (40, 190, 30), -1)          # petit point vert parasite
     img = img.astype(np.int16) + rng.normal(0, noise, img.shape).astype(np.int16)
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+def hand_scene(hand_cx=320, hand_cy=200, hand_r=50,
+               distractors=True, w=640, h=480):
+    """Image synthétique avec une main (couleur peau) sur fond blanc/gris.
+
+    La main est un large cercle couleur peau (BGR ≈ (120, 150, 200) → peau claire).
+    Les distracteurs sont des rectangles de couleurs variées placés loin de la main.
+    """
+    # Fond : tableau blanc/gris légèrement dégradé
+    img = np.full((h, w, 3), 220, np.float32)
+    img += np.linspace(-15, 10, w)[None, :, None]
+    img = np.clip(img, 0, 255).astype(np.uint8)
+
+    # Main (peau) — couleur BGR typique de la peau humaine
+    # BGR (120, 150, 200) → HSV ≈ H=15, S=100, V=200 → teinte peau
+    # YCrCb ≈ Y=160, Cr=155, Cb=102 → dans la plage peau
+    skin_bgr = (120, 150, 200)
+    cv2.circle(img, (int(hand_cx), int(hand_cy)), hand_r, skin_bgr, -1, cv2.LINE_AA)
+
+    # Bout du doigt (en haut de la main, pointant vers le haut)
+    finger_tip_y = int(hand_cy - hand_r - 15)
+    finger_tip_x = int(hand_cx)
+    cv2.ellipse(img, (finger_tip_x, finger_tip_y + 10), (8, 20), 0, 0, 360, skin_bgr, -1)
+
+    if distractors:
+        # Distracteur 1 : rectangle noir (la télécommande du voisin !)
+        cv2.rectangle(img, (550, 350), (600, 440), (30, 30, 30), -1)
+        # Distracteur 2 : rectangle marron/bois (bureau)
+        cv2.rectangle(img, (10, 400), (120, 470), (80, 120, 160), -1)
+        # Distracteur 3 : petite tache couleur peau loin de la main
+        cv2.circle(img, (580, 50), 8, skin_bgr, -1)
+
+    # Bruit léger
+    img = img.astype(np.int16) + rng.normal(0, 4, img.shape).astype(np.int16)
     return np.clip(img, 0, 255).astype(np.uint8)
 
 
@@ -131,6 +170,130 @@ for use_cv in (False, True):
     ms = (time.perf_counter() - t0) / 30 * 1000
     tag = "OpenCV" if use_cv else "NumPy "
     check(f"[{tag}] temps par image", ms < 33, f"{ms:.1f} ms  (~{1000 / ms:.0f} FPS max)")
+
+# ------------------------------------------------------------------
+# Nouveaux tests : YCrCb et OpenCVHandDetector
+# ------------------------------------------------------------------
+
+print("\n6) YCrCb NumPy vs OpenCV")
+img_ycr = rng.integers(0, 256, (100, 140, 3), dtype=np.uint8)
+ycrcb_np = ops.bgr_to_ycrcb(img_ycr).astype(int)
+ycrcb_cv = cv2.cvtColor(img_ycr, cv2.COLOR_BGR2YCrCb).astype(int)
+diff_ycrcb = np.abs(ycrcb_np - ycrcb_cv)
+check("BGR->YCrCb (Y,Cr,Cb)", diff_ycrcb.max() <= 2,
+      f"écart max = {diff_ycrcb.max()}")
+
+print("\n7) OpenCVHandDetector — détection de main synthétique")
+
+# Test 7a : détection de base (main présente)
+hand_det = OpenCVHandDetector(downscale=1, blur_k=3,
+                               open_kernel=3, close_kernel=5,
+                               min_area=200, max_area_ratio=0.5,
+                               pointer_point="centroid",
+                               use_bg_sub=False)
+hand_img = hand_scene(hand_cx=320, hand_cy=200, hand_r=50, distractors=True)
+d = hand_det.detect(hand_img)
+if d.found:
+    err = np.hypot(d.x - 320, d.y - 200)
+    check("[Hand OpenCV] main détectée", True,
+          f"pos=({d.x:.1f}, {d.y:.1f}), err={err:.1f} px, source={d.source}")
+    # Le centroïde doit être raisonnablement proche du centre de la main
+    check("[Hand OpenCV] erreur position < 30 px", err < 30,
+          f"err = {err:.1f} px")
+else:
+    check("[Hand OpenCV] main détectée", False, f"raison : {d.reason}")
+    check("[Hand OpenCV] erreur position < 30 px", False, "main non trouvée")
+
+# Test 7b : mode fingertip (pointe le plus haut)
+hand_det_tip = OpenCVHandDetector(downscale=1, blur_k=3,
+                                   open_kernel=3, close_kernel=5,
+                                   min_area=200, max_area_ratio=0.5,
+                                   pointer_point="fingertip",
+                                   use_bg_sub=False)
+d_tip = hand_det_tip.detect(hand_img)
+if d_tip.found:
+    # Le bout du doigt doit être au-dessus du centroïde (y plus petit)
+    check("[Hand OpenCV fingertip] doigt plus haut que centroïde",
+          d_tip.y < d.y if d.found else True,
+          f"tip_y={d_tip.y:.1f} < centroid_y={d.y:.1f}" if d.found else f"tip=({d_tip.x:.1f},{d_tip.y:.1f})")
+else:
+    check("[Hand OpenCV fingertip] doigt plus haut que centroïde", False,
+          f"raison : {d_tip.reason}")
+
+# Test 7c : pas de main (image vide)
+empty = np.full((480, 640, 3), 220, np.uint8)
+d_empty = hand_det.detect(empty)
+check("[Hand OpenCV] aucune fausse détection sur fond vide", not d_empty.found,
+      f"raison : {d_empty.reason}")
+
+# Test 7d : champs source et hand_bbox
+if d.found:
+    check("[Hand OpenCV] source == 'hand'", d.source == "hand",
+          f"source = {d.source}")
+    check("[Hand OpenCV] hand_bbox renseigné", d.hand_bbox is not None,
+          f"hand_bbox = {d.hand_bbox}")
+
+# Test 7e : temps de traitement OpenCVHandDetector
+print("\n8) Temps de traitement OpenCVHandDetector (640x480)")
+hand_det_bench = OpenCVHandDetector(downscale=1, use_bg_sub=False)
+hand_img_bench = hand_scene(320, 200, 50)
+hand_det_bench.detect(hand_img_bench)  # warmup
+t0 = time.perf_counter()
+for _ in range(30):
+    hand_det_bench.detect(hand_img_bench)
+ms = (time.perf_counter() - t0) / 30 * 1000
+check("[Hand OpenCV] temps par image", ms < 33,
+      f"{ms:.1f} ms  (~{1000 / ms:.0f} FPS max)")
+
+# ------------------------------------------------------------------
+# Tests anti-visage, longue distance et filtre de Kalman
+# ------------------------------------------------------------------
+print("\n9) Anti-visage : main mobile vs grand visage ovale")
+det_fv = OpenCVHandDetector(downscale=1, pointer_point="centroid", use_bg_sub=False)
+skin_bgr = (120, 150, 200)
+d_fv = None
+for t in range(6):
+    frame_fv = np.full((480, 640, 3), 220, np.uint8)
+    # Grand visage ovale quasi-immobile avec yeux/bouche sombres
+    cv2.ellipse(frame_fv, (160, 150), (55, 75), 0, 0, 360, skin_bgr, -1)
+    cv2.circle(frame_fv, (140, 135), 9, (30, 30, 30), -1)
+    cv2.circle(frame_fv, (180, 135), 9, (30, 30, 30), -1)
+    cv2.ellipse(frame_fv, (160, 180), (20, 8), 0, 0, 360, (40, 40, 60), -1)
+    # Petite main qui bouge à droite
+    hx, hy = 400 + t * 18, 280 - t * 12
+    cv2.circle(frame_fv, (hx, hy), 22, skin_bgr, -1)
+    cv2.ellipse(frame_fv, (hx, hy - 26), (5, 12), 0, 0, 360, skin_bgr, -1)
+    d_fv = det_fv.detect(frame_fv)
+
+target_x, target_y = 400 + 5 * 18, 280 - 5 * 12
+err_fv = np.hypot(d_fv.x - target_x, d_fv.y - target_y) if d_fv.found else 999
+check("[Anti-Visage] verrouillé sur la main (et non le visage)",
+      d_fv.found and err_fv < 30,
+      f"pos=({d_fv.x:.1f}, {d_fv.y:.1f}) vs main=({target_x}, {target_y}), err={err_fv:.1f} px")
+
+print("\n10) Longue distance : petite main (r=9, ~250 px²)")
+det_ld = OpenCVHandDetector(downscale=1, pointer_point="centroid", use_bg_sub=False)
+img_ld = hand_scene(hand_cx=480, hand_cy=160, hand_r=9, distractors=False)
+d_ld = det_ld.detect(img_ld)
+err_ld = np.hypot(d_ld.x - 480, d_ld.y - 160) if d_ld.found else 999
+check("[Longue distance] petite main détectée (< 15 px)",
+      d_ld.found and err_ld < 15,
+      f"pos=({d_ld.x:.1f}, {d_ld.y:.1f}), err={err_ld:.1f} px, aire={d_ld.area}")
+
+print("\n11) Stabilisateur Kalman 2D")
+kf_stab = PointerStabilizer(filter_type="kalman")
+raw_k, smooth_k = [], []
+for i in range(120):
+    x, y = 300 + rng.normal(0, 1.5), 200 + rng.normal(0, 1.5)
+    s = kf_stab.update(Detection(True, x=x, y=y, area=300), i)
+    raw_k.append((x, y)); smooth_k.append((s.x, s.y))
+raw_k, smooth_k = np.array(raw_k[20:]), np.array(smooth_k[20:])
+sr_k = np.sqrt(raw_k.var(axis=0).sum()); ss_k = np.sqrt(smooth_k.var(axis=0).sum())
+check("[Kalman] tremblement réduit", ss_k < sr_k / 2,
+      f"(brut {sr_k:.2f} px -> lissé {ss_k:.2f} px)")
+k_states = [kf_stab.update(Detection(False), 200 + i).status for i in range(8)]
+check("[Kalman] HOLD puis LOST", k_states[0] == "HOLD" and k_states[-1] == "LOST",
+      str(k_states))
 
 print(f"\nRésultat : {passed} réussis, {failed} échoués")
 sys.exit(1 if failed else 0)

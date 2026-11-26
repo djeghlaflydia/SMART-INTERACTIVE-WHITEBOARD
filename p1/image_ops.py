@@ -97,6 +97,27 @@ def bgr_to_hsv(img):
     return np.stack([h, np.round(s), v], axis=-1).astype(np.uint8)
 
 
+def bgr_to_ycrcb(img):
+    """Convertit une image BGR uint8 en YCrCb (convention OpenCV, BT.601).
+
+    Équivalent : cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+
+    Formules (par pixel, delta = 128 pour uint8) :
+        Y  = 0.299*R + 0.587*G + 0.114*B
+        Cr = (R - Y)*0.713 + 128
+        Cb = (B - Y)*0.564 + 128
+    Pourquoi YCrCb ? La chrominance (Cr, Cb) isole efficacement la peau
+    humaine indépendamment de la luminance Y (ombres / projecteur).
+    """
+    f = img.astype(np.float32)
+    b, g, r = f[..., 0], f[..., 1], f[..., 2]
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    cr = (r - y) * 0.713 + 128.0
+    cb = (b - y) * 0.564 + 128.0
+    ycrcb = np.stack([y, cr, cb], axis=-1)
+    return np.clip(np.round(ycrcb), 0, 255).astype(np.uint8)
+
+
 # ---------------------------------------------------------------------------
 # 3) Seuillage (segmentation)
 # ---------------------------------------------------------------------------
@@ -115,6 +136,41 @@ def in_range_hsv(hsv, lower, upper):
     else:                                           # plage circulaire (rouge)
         mask_h = (h >= hl) | (h <= hu)
     return mask_h & (s >= sl) & (s <= su) & (v >= vl) & (v <= vu)
+
+
+def skin_mask(hsv, ycrcb, cr_range=(133, 173), cb_range=(77, 127),
+              s_range=(20, 200), v_min=45):
+    """Segmentation multi-espace de la peau humaine (YCrCb + HSV).
+
+    Combine la chrominance YCrCb (robuste aux variations d'éclairage) avec
+    des garde-fous HSV (teinte peau, saturation non nulle, luminance min)
+    pour rejeter les ombres sombres et les reflets blancs du tableau.
+    """
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    cr, cb = ycrcb[..., 1], ycrcb[..., 2]
+    ycrcb_ok = (cr >= cr_range[0]) & (cr <= cr_range[1]) & (cb >= cb_range[0]) & (cb <= cb_range[1])
+    hue_ok = (h <= 25) | (h >= 165)
+    hsv_ok = hue_ok & (s >= s_range[0]) & (s <= s_range[1]) & (v >= v_min)
+    return ycrcb_ok & hsv_ok
+
+
+def dark_achromatic_mask(hsv, v_max=80, s_max=95):
+    """Isole les pixels sombres et peu saturés (télécommande noire).
+
+    Un objet noir a une luminance V faible et une saturation S faible
+    (sa teinte H est du bruit pur et ne doit pas être utilisée).
+    """
+    return (hsv[..., 2] <= v_max) & (hsv[..., 1] <= s_max)
+
+
+def foreground_mask(frame_bgr, bg_model, thresh=22):
+    """Soustraction de fond : pixels différant du modèle de fond statique.
+
+    Utilise la distance L_inf (maximum sur les 3 canaux BGR) par rapport au
+    modèle de fond adaptatif float32.
+    """
+    diff = np.abs(frame_bgr.astype(np.float32) - bg_model)
+    return np.max(diff, axis=-1) > thresh
 
 
 # ---------------------------------------------------------------------------
