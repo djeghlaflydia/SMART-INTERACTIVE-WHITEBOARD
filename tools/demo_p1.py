@@ -1,7 +1,7 @@
 """
 demo_p1.py — Démonstration et TESTS de P1 avec la vraie caméra.
 
-Lancer :  python tools/demo_p1.py   [--video chemin.mp4]   [--opencv]
+Lancer :  python tools/demo_p1.py   [--video chemin.mp4]   [--opencv]  [--method hand_opencv|color_marker]
 
 Affiche le flux vidéo, le masque, la position détectée (brute + lissée),
 la trajectoire, l'état (TRACKING / HOLD / LOST) et les FPS.
@@ -13,6 +13,10 @@ Touches :
   l  journaliser dans logs/p1_log.csv (tests d'éclairage, disparition...)
   p  capture d'écran dans logs/ (pour le rapport)
   c  effacer la trajectoire
+  b  réinitialiser le modèle de fond (soustraction de fond)
+  a  auto-calibrer les seuils peau depuis le carré central
+  f  basculer entre mode "fingertip" et "centroid" (hand_opencv uniquement)
+  d  basculer entre hand_opencv et color_marker
   q  quitter
 """
 
@@ -30,6 +34,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from p1 import PointerTracker, load_config  # noqa: E402
+from p1.detector import OpenCVHandDetector  # noqa: E402
 
 COLORS = {"TRACKING": (0, 200, 0), "HOLD": (0, 165, 255), "LOST": (0, 0, 255)}
 
@@ -39,6 +44,8 @@ def main():
     ap.add_argument("--config", default=os.path.join(ROOT, "config.json"))
     ap.add_argument("--video", help="vidéo à utiliser à la place de la caméra")
     ap.add_argument("--opencv", action="store_true", help="utiliser les fonctions OpenCV (comparaison)")
+    ap.add_argument("--method", default=None, choices=["hand_opencv", "color_marker"],
+                    help="méthode de détection")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -46,6 +53,8 @@ def main():
         cfg["camera"]["index"] = args.video
     if args.opencv:
         cfg["detection"]["use_opencv"] = True
+    if args.method:
+        cfg["detection"]["method"] = args.method
 
     os.makedirs(os.path.join(ROOT, "logs"), exist_ok=True)
     tracker = PointerTracker(config=cfg).start()
@@ -54,7 +63,9 @@ def main():
     jitter = None            # liste de positions pendant le test de stabilité
     log_file = log_writer = None
     last_idx = -1
+    method_name = cfg["detection"].get("method", "color_marker")
     print(__doc__)
+    print(f"Méthode active : {method_name}")
 
     try:
         while True:
@@ -70,6 +81,25 @@ def main():
                 trail.append((int(st.x), int(st.y)))
             for i in range(1, len(trail)):
                 cv2.line(vis, trail[i - 1], trail[i], (255, 0, 255), 2)
+
+            # --- Dessin spécifique hand_opencv ---
+            is_hand = isinstance(tracker.detector, OpenCVHandDetector)
+            if is_hand:
+                det = tracker.detector
+                if det._last_face_bbox is not None:
+                    fx0, fy0, fx1, fy1 = det._last_face_bbox
+                    cv2.rectangle(vis, (fx0, fy0), (fx1, fy1), (0, 0, 220), 2)
+                    cv2.putText(vis, "FACE IGNORED", (fx0, max(15, fy0 - 6)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 220), 2)
+                if st.detected:
+                    f = det.downscale
+                    if det._last_contour is not None:
+                        contour_full = det._last_contour * f + (f - 1) // 2
+                        cv2.drawContours(vis, [contour_full], -1, (0, 255, 0), 2)
+                    if det._last_hull is not None:
+                        hull_full = det._last_hull * f + (f - 1) // 2
+                        cv2.drawContours(vis, [hull_full], -1, (255, 180, 0), 2)
+
             if st.detected and st.bbox:
                 x0, y0, x1, y1 = st.bbox
                 cv2.rectangle(vis, (x0, y0), (x1, y1), (0, 255, 255), 1)
@@ -78,11 +108,16 @@ def main():
                 cx, cy = int(st.x), int(st.y)                                         # lissé
                 cv2.drawMarker(vis, (cx, cy), COLORS[st.status], cv2.MARKER_CROSS, 24, 2)
 
+            # Infos texte
+            source_tag = ""
+            if is_hand:
+                ptr_mode = tracker.detector.pointer_point
+                source_tag = f"  [{st.source}|{ptr_mode}]"
             pos = f"({st.x:.1f}, {st.y:.1f})" if st.valid else "-"
-            cv2.putText(vis, f"{st.status}  {pos}  aire={st.area}", (10, 25),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, COLORS[st.status], 2)
+            cv2.putText(vis, f"{st.status}  {pos}  aire={st.area}{source_tag}", (10, 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.60, COLORS[st.status], 2)
             cv2.putText(vis, f"FPS {tracker.fps:.1f}  {st.frame_size[0]}x{st.frame_size[1]}"
-                        f"  {'OpenCV' if tracker.detector.use_opencv else 'NumPy'}",
+                        f"  {method_name}",
                         (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
 
             # --- test de stabilité ---
@@ -108,7 +143,9 @@ def main():
 
             cv2.imshow("P1 - camera", vis)
             if show_mask and mask is not None:
-                cv2.imshow("P1 - masque", mask.astype(np.uint8) * 255)
+                # Le masque hand_opencv est déjà uint8 (0 ou 255)
+                mask_display = mask if mask.dtype == np.uint8 else mask.astype(np.uint8) * 255
+                cv2.imshow("P1 - masque", mask_display)
 
             k = cv2.waitKey(1) & 0xFF
             if k == ord("q"):
@@ -119,13 +156,38 @@ def main():
                     cv2.destroyWindow("P1 - masque")
             elif k == ord("j"):
                 jitter = []
-                print("Test de stabilité : gardez le marqueur IMMOBILE...")
+                print("Test de stabilité : gardez le pointeur IMMOBILE...")
             elif k == ord("c"):
                 trail.clear()
             elif k == ord("p"):
                 name = os.path.join(ROOT, "logs", f"capture_{int(time.time())}.png")
                 cv2.imwrite(name, vis)
                 print("Capture :", name)
+            elif k == ord("b"):
+                tracker.reset_background()
+                print("Modèle de fond réinitialisé.")
+            elif k == ord("a"):
+                if is_hand:
+                    h, w = frame.shape[:2]
+                    roi = (w // 2 - 40, h // 2 - 40, w // 2 + 40, h // 2 + 40)
+                    if tracker.detector.calibrate_skin_from_roi(frame, roi):
+                        print("Seuils peau auto-calibrés depuis le centre de l'image !")
+            elif k == ord("f"):
+                if is_hand:
+                    cur = tracker.detector.pointer_point
+                    new_mode = "centroid" if cur == "fingertip" else "fingertip"
+                    tracker.detector.set_pointer_mode(new_mode)
+                    print(f"Mode pointeur : {new_mode}")
+                else:
+                    print("Le mode fingertip/centroid n'est disponible qu'en hand_opencv.")
+            elif k == ord("d"):
+                # Hot-switch between methods (requires restart in practice)
+                if method_name == "hand_opencv":
+                    method_name = "color_marker"
+                else:
+                    method_name = "hand_opencv"
+                print(f"Méthode basculée -> {method_name}. Redémarrage nécessaire.")
+                print(f"  Modifier config.json -> detection.method = \"{method_name}\"")
             elif k == ord("l"):
                 if log_writer:
                     log_file.close()

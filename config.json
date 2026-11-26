@@ -10,18 +10,29 @@
     "mirror": true
   },
   "detection": {
-    "method": "color_marker",
-    "hsv_lower": [
-      104,
-      0,
-      0
-    ],
-    "hsv_upper": [
-      124,
-      255,
-      255
-    ],
-    "downscale": 2,
+    "method": "hand_opencv",
+    "downscale": 1,
+    "blur_k": 3,
+    "skin_ycrcb_min": [0, 133, 77],
+    "skin_ycrcb_max": [255, 173, 127],
+    "skin_hsv_min": [0, 20, 35],
+    "skin_hsv_max": [25, 250, 255],
+    "skin_hsv_min2": [165, 20, 35],
+    "skin_hsv_max2": [180, 250, 255],
+    "hand_open_kernel": 3,
+    "hand_close_kernel": 5,
+    "hand_min_area": 120,
+    "hand_max_area_ratio": 0.45,
+    "pointer_point": "fingertip",
+    "use_bg_sub": true,
+    "bg_history": 300,
+    "bg_threshold": 25,
+    "bg_detect_shadows": false,
+    "bg_learning_rate": 0.002,
+    "use_motion": true,
+    "face_reject": true,
+    "hsv_lower": [104, 0, 0],
+    "hsv_upper": [124, 255, 255],
     "blur": 3,
     "open_kernel": 3,
     "close_kernel": 5,
@@ -30,6 +41,7 @@
     "use_opencv": false
   },
   "stabilization": {
+    "filter_type": "kalman",
     "alpha_min": 0.25,
     "alpha_max": 0.9,
     "speed_scale": 25.0,
