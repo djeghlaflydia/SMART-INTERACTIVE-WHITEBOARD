@@ -74,3 +74,81 @@ conventions qu'OpenCV : P2 peut appliquer son homographie directement sur `(x, y
   (ni pour le pointeur affiché, ni pour les boutons ou le dessin), sinon la caméra
   détecte la projection au lieu du marqueur.
 - Un seul programme ouvre la caméra : le `PointerTracker`. Les autres modules lisent ses résultats.
+
+
+---
+
+# P2 — Calibration et transformation homographique
+
+Module P2 du projet **Smart Interactive Whiteboard** .
+
+Il assure la calibration du tableau interactif et la transformation des coordonnées du pointeur depuis le repère de la caméra vers le repère logique du tableau.
+
+## Fonctionnalités
+
+- Sélection des quatre coins du tableau à partir de l'image caméra.
+- Organisation automatique des coins dans le bon ordre.
+- Validation géométrique des points sélectionnés.
+- Calcul de la matrice d'homographie.
+- Transformation des coordonnées caméra vers les coordonnées du tableau.
+- Vérification si le pointeur se trouve à l'intérieur du tableau.
+- Limitation des coordonnées aux dimensions du tableau.
+- Vérification de l'erreur de reprojection.
+
+## Structure
+
+```text
+p2/
+├── __init__.py
+├── calibration.py     <- sélection et validation des quatre coins
+├── homography.py      <- calcul et application de l'homographie
+└── transformer.py     <- interface principale pour les autres modules
+```
+
+## Repère du tableau
+
+Le repère logique du tableau est défini par défaut avec une résolution de **1280 × 720 pixels**.
+
+- Origine : coin supérieur gauche.
+- Axe X : augmente vers la droite.
+- Axe Y : augmente vers le bas.
+
+## Contrat d'interface
+
+Le module P2 utilise les coordonnées fournies par P1 et les transforme en coordonnées logiques du tableau.
+
+```python
+from p2.transformer import BoardTransformer
+
+transformer = BoardTransformer(1280, 720)
+
+# Calibration à partir des quatre coins détectés dans l'image caméra
+transformer.calibrate(camera_points, image_size)
+
+# Transformation d'une position caméra
+board_x, board_y = transformer.transform(camera_x, camera_y)
+
+# Vérification de la position
+inside = transformer.is_inside(board_x, board_y)
+```
+
+**Entrées :** coordonnées du pointeur dans l'image caméra, fournies par P1.
+
+**Sorties :** coordonnées transformées dans le repère logique du tableau, destinées aux modules P4 et P5.
+
+## Tests et démonstration
+
+Depuis la racine du projet :
+
+```bash
+python -m tests.test_p2
+```
+
+Pour lancer la démonstration en temps réel :
+
+```bash
+python -m tools.demo_p2
+```
+
+La démonstration utilise le `PointerTracker` de P1 pour récupérer les coordonnées du pointeur et visualiser leur transformation sur le tableau.
+
