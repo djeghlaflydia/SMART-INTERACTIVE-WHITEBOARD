@@ -152,3 +152,77 @@ python -m tools.demo_p2
 
 La démonstration utilise le `PointerTracker` de P1 pour récupérer les coordonnées du pointeur et visualiser leur transformation sur le tableau.
 
+
+---
+
+# P3 — Configuration et détection des événements de la télécommande
+
+Module P3 du projet **Smart Interactive Whiteboard**.
+
+La télécommande sans fil 2.4 GHz (dongle USB) est reconnue comme un périphérique standard **USB HID (clavier)**.
+
+- **Bouton Next (Suivant)** → `LEFT_CLICK` (`CLIC_GAUCHE`)
+- **Bouton Previous (Précédent)** → `RIGHT_CLICK` (`CLIC_DROIT`)
+
+## Contrat d'interface
+
+```python
+from p3 import RemoteController, LEFT_CLICK, RIGHT_CLICK
+
+remote = RemoteController.from_config("config.json")
+event = remote.process_opencv_key(cv2.waitKeyEx(1))
+if event is not None:
+    print(event.action, event.button)  # LEFT_CLICK / RIGHT_CLICK
+```
+
+## Tests P3
+
+```bash
+python3 -m tests.test_p3
+python3 -m tools.test_p3_remote
+```
+
+---
+
+# P4 — Interaction et gestion des événements
+
+Module P4 du projet **Smart Interactive Whiteboard**.
+
+Relie en temps réel :
+- **P1 (`PointerTracker`)** : position caméra du pointeur
+- **P2 (`BoardTransformer`)** : transformation homographique vers le repère tableau `1280 × 720`
+- **P3 (`RemoteController`)** : détection des clics gauche/droite
+
+Fonctionnalités :
+- Conservation de la dernière position valide du pointeur (`HOLD` + fenêtre de grâce configurable `lost_grace_seconds`).
+- Rejet ou clamp configurable des clics hors tableau.
+- Hit-testing optionnel sur les éléments d'interface (`UIZoneManager`).
+- File d'événements thread-safe (`pop_events()`) et callbacks (`on_left_click`, `on_right_click`, `on_event`) pour **P5**.
+
+## Contrat d'interface (à partager avec P5)
+
+```python
+from p4 import InteractionManager, ClickType
+
+manager = InteractionManager.from_config(transformer, "config.json")
+
+# Dans la boucle principale :
+snapshot, event = manager.step(tracker.get_pointer(), key_code=cv2.waitKeyEx(1))
+
+# Ou via file d'événements / callbacks :
+for ev in manager.pop_events():
+    if ev.click_type == ClickType.LEFT:
+        print(f"Clic gauche en ({ev.x:.0f}, {ev.y:.0f}) cible={ev.target_id}")
+    elif ev.click_type == ClickType.RIGHT:
+        print(f"Clic droit en ({ev.x:.0f}, {ev.y:.0f})")
+```
+
+## Tests et démonstration P3 + P4
+
+```bash
+python3 -m tests.test_p4
+python3 -m tools.demo_p3_p4 --simulate   # Sans caméra (souris + télécommande/clavier)
+python3 -m tools.demo_p3_p4              # Complet (P1 + P2 + P3 + P4)
+```
+
+

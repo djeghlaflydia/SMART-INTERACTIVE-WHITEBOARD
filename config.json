@@ -48,5 +48,15 @@
     "dead_zone": 1.5,
     "max_lost_frames": 5,
     "max_jump": 150.0
+  },
+  "remote": {
+    "debounce_ms": 180,
+    "enable_keyboard_fallback": true
+  },
+  "interaction": {
+    "board_width": 1280,
+    "board_height": 720,
+    "lost_grace_seconds": 0.6,
+    "clamp_outside_clicks": false
   }
 }
